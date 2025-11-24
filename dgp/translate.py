@@ -35,9 +35,20 @@ def translate_text(
     )
     
     try:
-        response = client.completions.create(
+        # response = client.completions.create(
+        #     model=model,
+        #     prompt=prompt,
+        #     max_tokens=max_tokens,
+        #     temperature=temperature,
+        #     top_p=top_p,
+        #     stop=["\n\n", "Text:", "Translation:"]  # Stop at these tokens
+        # )
+        response = client.chat.completions.create(
             model=model,
-            prompt=prompt,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that translates text."},
+                {"role": "user", "content": prompt}
+            ],
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
@@ -45,7 +56,7 @@ def translate_text(
         )
         
         # Extract and clean the translation
-        translation = response.choices[0].text.strip()
+        translation = response.choices[0].message.content.strip()
         
         # Remove any potential labels that might have slipped through
         if translation.startswith(("Translation:", "translation:", "Answer:", "answer:")):

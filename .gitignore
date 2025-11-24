@@ -3,3 +3,6 @@ vllm_source/
 comet_model/
 translation_output/
 data/
+logs/
+results/
+flores_results/

@@ -126,8 +126,9 @@ class SentenceLevelSyntheticTranslationPipeline:
         while k <= 1.0:
             # Translate using model with temperature k
             translation = self.translate(sentence, temperature=k)
+            # print(translation)
 
-            if detect_language(translation, lang_id="__label__kin_Latn") is False:
+            if detect_language(translation, language=self.target_language) is False:
                 # If language detection fails, skip this translation
                 k = k + 0.1
                 continue
@@ -861,14 +862,15 @@ def main():
     """
     
     # Initialize pipeline
-    translation_model = "google/gemma-3-1b-it"
+    # translation_model = "google/gemma-3-1b-it"
+    translation_model = "openai/gpt-oss-120b"
     pipeline = DocumentLevelSyntheticTranslationPipeline(
         translate_model=translation_model,
         backtranslate_model=translation_model,
         source_language="English",
         target_language="Kinyarwanda",
         min_threshold=50.0,
-        base_url="http://localhost:8000/v1",
+        base_url="http://localhost:8000/v1/",
         output_dir="translation_output",
         skip_existing=True  # Skip already processed rows
     )
