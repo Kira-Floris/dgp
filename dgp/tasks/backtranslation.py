@@ -104,9 +104,9 @@ def evaluate_backtranslation(state: BackTranslationState) -> BackTranslationStat
     try:
         # Prepare evaluation input
         eval_input = EvaluationInput(
-            original_text=state["original_text"],
+            original_text=state["forward_translation"],
             back_translation=state["back_translation"],
-            forward_translation=state["forward_translation"],
+            forward_translation=state["original_text"],
             source_lang=state["source_lang"],
             target_lang=state["intermediate_lang"]
         )
@@ -238,7 +238,7 @@ if __name__ == "__main__":
         provider=GroqProvider(),
         metrics=[
             BLEUScore(max_order=4), 
-            # COMETMetric()
+            COMETMetric()
             ],
         model_config=ModelConfig(
             model_name="openai/gpt-oss-120b", 
@@ -247,9 +247,9 @@ if __name__ == "__main__":
     )
     
     result1 = pipeline1.run(
-        text="Hello, how are you?",
-        source_lang="English",
-        intermediate_lang="Kinyarwanda",
-        system_template="Translate the following text from {src_lang} to {tgt_lang}"
+        text="Amakuru yanyu?",
+        source_lang="Kinyarwanda",
+        intermediate_lang="English",
+        system_template="Translate the following text from {src_lang} to {tgt_lang}. Return the translation only."
     )
     print("Result 1:", result1)
