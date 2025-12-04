@@ -134,8 +134,51 @@ def evaluate_backtranslation(state: BackTranslationState) -> BackTranslationStat
     return state
 
 class BackTranslationPipeline:
-    """Builder for back-translation workflows."""
-    
+    """
+    BackTranslationPipeline
+    ------------------------
+    A lightweight workflow builder for performing back-translation using LangGraph.
+
+    This pipeline performs:
+        1. Forward translation  (source_lang → intermediate_lang)
+        2. Back translation     (intermediate_lang → source_lang)
+        3. Automatic evaluation using user-provided metrics
+
+    Components required:
+        - provider: ModelProvider
+            Backend used to run the translations (OpenAI, Groq, etc.)
+        - metrics: List[EvaluationMetric]
+            Evaluation metrics such as BLEU, COMET, etc.
+        - model_config: Optional[ModelConfig]
+            Defines the model name, temperature, and runtime configuration.
+
+    Usage Example:
+    --------------
+    Example of how this class is typically run:
+
+        from dgp.providers import GroqProvider
+        from dgp.metrics import BLEUScore, COMETMetric
+        from dgp.tasks.backtranslation import BackTranslationPipeline
+
+        pipeline = BackTranslationPipeline(
+            provider=GroqProvider(),
+            metrics=[BLEUScore(max_order=4), COMETMetric()],
+            model_config=ModelConfig(
+                model_name="openai/gpt-oss-120b",
+                temperature=0.0
+            )
+        )
+
+        result = pipeline.run(
+            text="Amakuru yawe?",
+            source_lang="Kinyarwanda",
+            intermediate_lang="English",
+            system_template="Translate the text from {src_lang} to {tgt_lang}."
+        )
+
+        print(result)
+
+    """
     def __init__(
         self,
         provider: ModelProvider,
@@ -228,28 +271,28 @@ class BackTranslationPipeline:
             }
         }
 
-if __name__ == "__main__":
-    # Example 1: OpenAI with BLEU and COMET
-    from dgp.providers import GroqProvider
-    from dgp.metrics import BLEUScore, COMETMetric
-    src_lang: str = "English"
-    tgt_lang: str = "French"
-    pipeline1 = BackTranslationPipeline(
-        provider=GroqProvider(),
-        metrics=[
-            BLEUScore(max_order=4), 
-            COMETMetric()
-            ],
-        model_config=ModelConfig(
-            model_name="openai/gpt-oss-120b", 
-            temperature=0.0,
-        )
-    )
+# if __name__ == "__main__":
+#     # Example 1: OpenAI with BLEU and COMET
+#     from dgp.providers import GroqProvider
+#     from dgp.metrics import BLEUScore, COMETMetric
+#     src_lang: str = "English"
+#     tgt_lang: str = "French"
+#     pipeline1 = BackTranslationPipeline(
+#         provider=GroqProvider(),
+#         metrics=[
+#             BLEUScore(max_order=4), 
+#             COMETMetric()
+#             ],
+#         model_config=ModelConfig(
+#             model_name="openai/gpt-oss-120b", 
+#             temperature=0.0,
+#         )
+#     )
     
-    result1 = pipeline1.run(
-        text="Amakuru yanyu?",
-        source_lang="Kinyarwanda",
-        intermediate_lang="English",
-        system_template="Translate the following text from {src_lang} to {tgt_lang}. Return the translation only."
-    )
-    print("Result 1:", result1)
+#     result1 = pipeline1.run(
+#         text="Amakuru yanyu?",
+#         source_lang="Kinyarwanda",
+#         intermediate_lang="English",
+#         system_template="Translate the following text from {src_lang} to {tgt_lang}. Return the translation only."
+#     )
+#     print("Result 1:", result1)
