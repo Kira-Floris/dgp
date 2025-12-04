@@ -6,3 +6,6 @@ data/
 logs/
 results/
 flores_results/
+build/
+
+*.env
