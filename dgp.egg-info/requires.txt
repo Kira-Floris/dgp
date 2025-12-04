@@ -1,0 +1,7 @@
+datasets
+fasttext
+langgraph
+openai
+sacrebleu
+transformers
+unbabel-comet
