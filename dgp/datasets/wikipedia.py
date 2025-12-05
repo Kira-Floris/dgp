@@ -22,8 +22,8 @@ def load_wikipedia_dataset(
         text_lens.append(len(text.split()))
         sentence_lens.append(len(re.findall(r".+?[.!?]+", text)))
         file_name = f"row_{i}.txt"
-        # with open(os.path.join(save_folder, file_name), "w", encoding="utf-8") as f:
-        #     f.write(text)
+        with open(os.path.join(save_folder, file_name), "w", encoding="utf-8") as f:
+            f.write(text)
     print(f"Average Text Length: {sum(text_lens)/len(text_lens)}")
     print(f"Min Text Length: {min(text_lens)}")
     print(f"Max Text Length: {max(text_lens)}")
