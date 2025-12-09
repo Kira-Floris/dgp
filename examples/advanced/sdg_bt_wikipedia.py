@@ -124,6 +124,8 @@ import csv
 from typing import List, Dict, Any
 import re
 from pathlib import Path
+from tqdm import tqdm
+import time
 
 source_lang = "english"
 intermediate_lang = "kinyarwanda"
@@ -228,6 +230,9 @@ model_name = "openai/gpt-oss-20b"
 metric_name = "COMET"
 
 temperature_values = [round(x * 0.1, 1) for x in range(0, 11)]
+prompt = "Translate the following text from {src_lang} to {tgt_lang}. Return the translated text only."
+
+failure_attempts = 5
 
 print(f"Processing {len(files)} files...")
 print(f"Temperature range: {temperature_values}")
@@ -235,10 +240,13 @@ print(f"Source language: {source_lang}")
 print(f"Intermediate language: {intermediate_lang}")
 print("=" * 80)
 
-for file_idx, file in enumerate(files[:1]):
+for file_idx, file in tqdm(enumerate(files[:1]), total=len(files), desc="Files Translated"):
     print(f"\n[{file_idx + 1}/{len(files)}] Processing file: {file}")
     
     file_path = os.path.join(data_dir, file)
+    output_path = os.path.join(output_dir, file)
+    if os.path.exists(output_path):
+        continue
     
     # Read the original text
     with open(file_path, "r", encoding="utf-8") as f:
@@ -257,27 +265,37 @@ for file_idx, file in enumerate(files[:1]):
         
         # Store all translation results for this sentence
         temp_results = []
+
+        def runner(provider, metrics, model_name, temp, sentence, source_lang, intermediate_lang, prompt, attempt=0, num_attempts=failure_attempts):
+            pipeline = BackTranslationPipeline(
+                provider=provider,
+                metrics=metrics,
+                model_config=ModelConfig(
+                    model_name=model_name,
+                    temperature=temp
+                )
+            )
+            
+            result = pipeline.run(
+                text=sentence,
+                source_lang=source_lang,
+                intermediate_lang=intermediate_lang,
+                system_template=prompt
+            )
+            if (result["forward"].strip() == "") or result["forward"] is None:
+                if attempt <= num_attempts:
+                    time.sleep(2)
+                    return runner(provider, metrics, model_name, temp, sentence, source_lang, intermediate_lang, prompt, attempt+1)
+                else:
+                    return result
+            return result
         
         # Try different temperatures
         for temp in temperature_values:
             print(f"    Temperature: {temp}", end=" ")
             
             try:
-                pipeline = BackTranslationPipeline(
-                    provider=provider,
-                    metrics=metrics,
-                    model_config=ModelConfig(
-                        model_name=model_name,
-                        temperature=temp
-                    )
-                )
-                
-                result = pipeline.run(
-                    text=sentence,
-                    source_lang=source_lang,
-                    intermediate_lang=intermediate_lang,
-                    system_template="Translate the following text from {src_lang} to {tgt_lang}. Return the translated text only."
-                )
+                result = runner(provider, metrics, model_name, temp, sentence, source_lang, intermediate_lang, prompt, 0)
                 
                 score = get_metric_score(result, metric_name=metric_name)
                 print(f"Score: {score:.4f}")
@@ -321,7 +339,6 @@ for file_idx, file in enumerate(files[:1]):
         
         # Save reconstructed text
         output_filename = file
-        output_path = os.path.join(output_dir, output_filename)
         
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(reconstructed_text)
