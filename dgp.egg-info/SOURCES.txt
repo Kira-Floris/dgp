@@ -1,9 +1,12 @@
 README.md
 pyproject.toml
+setup.py
 dgp/__init__.py
+dgp/config.py
 dgp/languagedetection.py
 dgp/metrics.py
 dgp/pipeline.py
+dgp/providers.py
 dgp/translate.py
 dgp/utils.py
 dgp.egg-info/PKG-INFO

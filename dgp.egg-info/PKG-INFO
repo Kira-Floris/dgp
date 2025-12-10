@@ -6,8 +6,19 @@ Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 Requires-Dist: datasets
 Requires-Dist: fasttext
+Requires-Dist: groq>=0.37.0
 Requires-Dist: langgraph
 Requires-Dist: openai
 Requires-Dist: sacrebleu
 Requires-Dist: transformers
 Requires-Dist: unbabel-comet
+
+
+## Setup
+
+```bash
+conda create -n dgp_env python=3.10
+conda activate dgp_env
+
+pip install .
+```

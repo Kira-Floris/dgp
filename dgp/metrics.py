@@ -177,7 +177,8 @@ class COMETMetric(EvaluationMetric):
             raise RuntimeError(f"COMET Model Loading Error: {e}")
 
         try:
-            ckpt_dir = os.path.dirname(download_model(kin_model_ckpt))
+            ckpt_dir = os.path.dirname(os.path.dirname(download_model(kin_model_ckpt)))
+            print(ckpt_dir)
             os.makedirs(os.path.join(ckpt_dir, "checkpoints"), exist_ok=True)
             shutil.copy(
                 os.path.join(ckpt_dir, "KinyCOMET+Unbabel.ckpt"), 
@@ -187,7 +188,7 @@ class COMETMetric(EvaluationMetric):
                 os.path.join(ckpt_dir, "KinyCOMET+XLM-Roberta.ckpt"), 
                 os.path.join(ckpt_dir, "checkpoints/KinyCOMET+XLM-Roberta.ckpt")
             )
-            self.kin_model = load_from_checkpoint(os.path.join(ckpt_dir, "KinyCOMET+Unbabel.ckpt"))
+            self.kin_model = load_from_checkpoint(os.path.join(ckpt_dir, "checkpoints/KinyCOMET+Unbabel.ckpt"))
         except Exception as e:
             self.kin_model = None
             raise RuntimeError(f"COMET Model Loading Error: {e}")
@@ -235,23 +236,53 @@ class COMETMetric(EvaluationMetric):
 
 
 class chrFScore(EvaluationMetric):
-    """chrF score metric."""
+    """chrF score metric for character-level translation quality evaluation."""
+    
+    def __init__(self, word_order: int = 0, lowercase: bool = True):
+        """
+        Initialize chrF metric.
+        
+        Args:
+            word_order: Word n-gram order (0 = character-level only, 2 = chrF++)
+            lowercase: Whether to lowercase text before scoring
+        """
+        self.word_order = word_order
+        self.lowercase = lowercase
     
     def compute(self, eval_input: EvaluationInput) -> MetricResult:
-        start_time = datetime.now()
+        start_time = time.time()
         
-        # Placeholder - implement actual chrF calculation
-        score = 0.82  # Dummy score
+        # Normalize texts
+        hypothesis = eval_input.back_translation
+        reference = eval_input.original_text
         
-        execution_time = (datetime.now() - start_time).total_seconds() * 1000
+        if self.lowercase:
+            hypothesis = normalize_text(hypothesis)
+            reference = normalize_text(reference)
+        
+        # Compute chrF score using sacrebleu
+        chrf = sacrebleu.corpus_chrf(
+            hypotheses=[hypothesis],
+            references=[[reference]],
+            word_order=self.word_order
+        )
+        
+        execution_time = (time.time() - start_time) * 1000
         
         return MetricResult(
             metric_name=self.get_name(),
-            score=score,
+            score=chrf.score,
+            metadata={
+                "word_order": self.word_order,
+                "lowercase": self.lowercase,
+                "chrf_version": "chrF++" if self.word_order > 0 else "chrF"
+            },
             execution_time_ms=execution_time
         )
     
     def get_name(self) -> str:
+        if self.word_order > 0:
+            return f"chrF++{self.word_order}"
         return "chrF"
     
     def requires_source_text(self) -> bool:

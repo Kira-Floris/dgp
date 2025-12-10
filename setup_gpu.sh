@@ -1,17 +1,17 @@
 # install conda
-wget -O ~/Miniconda3-latest-Linux-x86_64.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-bash /home/ubuntu/Miniconda3-latest-Linux-x86_64.sh
-source ~/.bashrc
+# wget -O ~/Miniconda3-latest-Linux-x86_64.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+# bash /home/ubuntu/Miniconda3-latest-Linux-x86_64.sh
+# source ~/.bashrc
 
-# clone vllm
-git clone https://github.com/vllm-project/vllm.git vllm_source
+# # clone vllm
+# git clone https://github.com/vllm-project/vllm.git vllm_source
 cd vllm_source
 
 # run docker setup for cpu
 sudo DOCKER_BUILDKIT=1 docker build . --target vllm-openai --tag vllm/vllm-openai --file docker/Dockerfile
 # sudo docker run --runtime nvidia --gpus all -v ~/.cache/huggingface:/root/.cache/huggingface --env "HF_TOKEN=$HF_TOKEN" -p 8000:8000 --ipc=host vllm/vllm-openai:latest --model openai/gpt-oss-120b --tensor-parallel-size 8
 # OPTIMIZED RUN
-sudo docker run --runtime nvidia --gpus all -v ~/.cache/huggingface:/root/.cache/huggingface --env "HF_TOKEN=$HF_TOKEN" -p 8000:8000 --ipc=host --shm-size=10g vllm/vllm-openai:latest --model openai/gpt-oss-120b --tensor-parallel-size 8 --max-model-len 4096 --max-num-seqs 256 --gpu-memory-utilization 0.90 --kv-cache-dtype fp8 --enforce-eager --disable-log-requests --max-num-batched-tokens 8192 --block-size 16 --swap-space 4
+sudo docker run --runtime nvidia --gpus all -v ~/.cache/huggingface:/root/.cache/huggingface --env "HF_TOKEN=$HF_TOKEN" -p 8000:8000 --ipc=host --shm-size=10g vllm/vllm-openai:latest --model openai/gpt-oss-120b --tensor-parallel-size 8 --max-model-len 4096 --max-num-seqs 256 --gpu-memory-utilization 0.90 --enforce-eager --disable-log-requests --max-num-batched-tokens 8192 --block-size 16 --swap-space 4
 cd ..
 
 # environment setup script
@@ -24,3 +24,4 @@ uv pip install datasets
 uv pip install sacrebleu
 uv pip install openai
 uv pip install unbabel-comet
+uv pip install groq>=0.37.0

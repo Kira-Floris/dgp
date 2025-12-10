@@ -9,3 +9,4 @@ flores_results/
 build/
 
 *.env
+*.log
