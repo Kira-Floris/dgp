@@ -1,11 +1,15 @@
+# python -m dgp.datasets.kinya_monolingual
+
 from datasets import load_dataset
 import os
 import json
+from tqdm import tqdm
+import re
 
 save_dir = "./data/"
 os.makedirs(save_dir, exist_ok=True)
 
-def load_wikipedia_dataset(split: str = "train", data_dir: str = "20231101.en"):
+def load_kinyarwanda_monolingual(split: str = "train"):
     """
     Load the Wikipedia dataset from Hugging Face Datasets.
     
@@ -15,17 +19,25 @@ def load_wikipedia_dataset(split: str = "train", data_dir: str = "20231101.en"):
     Returns:
         Loaded dataset split
     """
-    dataset = load_dataset("wikimedia/wikipedia", data_dir, split=split)
-    # save the dataset to ./data/ only saving the text column as json file
-    jsonl_path = os.path.join(save_dir, f"wikipedia_{split}.jsonl")
-    with open(jsonl_path, "w", encoding="utf-8") as f:
-        for row in dataset:
-            text = row.get("text", "")
-            f.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")
-
-    print(f"Saved text column to {jsonl_path}")
-
-    return dataset
+    dataset = load_dataset("mbazaNLP/kinyarwanda_monolingual_v01.1", split=split)
+    
+    save_folder = os.path.join(save_dir, "mbazanlp--kinyarwanda_monolingual_v01.1", "seed")
+    os.makedirs(save_folder, exist_ok=True)
+    text_lens = []
+    sentence_lens = []
+    for i, row in tqdm(enumerate(dataset), total=len(dataset), desc=f"Saving {save_dir} to {save_folder}"):
+        text: str = row.get("text", "")
+        text_lens.append(len(text.split()))
+        sentence_lens.append(len(re.findall(r".+?[.!?]+", text)))
+        file_name = f"row_{i}.txt"
+        with open(os.path.join(save_folder, file_name), "w", encoding="utf-8") as f:
+            f.write(text)
+    print(f"Average Text Length: {sum(text_lens)/len(text_lens)}")
+    print(f"Min Text Length: {min(text_lens)}")
+    print(f"Max Text Length: {max(text_lens)}")
+    print(f"Average Sentences: {sum(sentence_lens)/len(sentence_lens)}")
+    print(f"Min Sentences: {min(sentence_lens)}")
+    print(f"Max Sentences: {max(sentence_lens)}")
 
 if __name__ == "__main__":
-    load_wikipedia_dataset(split="train")
+    load_kinyarwanda_monolingual(split="train")

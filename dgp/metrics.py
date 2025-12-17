@@ -93,6 +93,12 @@ class EvaluationInput:
     target_lang: Optional[str] = None
 
 
+def normalize_text(text: str) -> str:
+    """Lowercase + remove punctuation for stable scoring."""
+    text = text.lower()
+    return text.translate(str.maketrans("", "", string.punctuation))
+
+
 class EvaluationMetric(ABC):
     """Abstract base class for evaluation metrics."""
     
@@ -123,7 +129,9 @@ class BLEUScore(EvaluationMetric):
         
         # Placeholder - implement actual BLEU calculation
         from sacrebleu import sentence_bleu
-        score = sentence_bleu(eval_input.back_translation, [eval_input.original_text])
+        score = sentence_bleu(
+            normalize_text(eval_input.back_translation), 
+            [normalize_text(eval_input.original_text)])
         # score = 0.85  # Dummy score
         
         execution_time = (datetime.now() - start_time).total_seconds() * 1000
@@ -140,13 +148,6 @@ class BLEUScore(EvaluationMetric):
     
     def requires_source_text(self) -> bool:
         return False  # Only needs reference and hypothesis
-
-
-def normalize_text(text: str) -> str:
-    """Lowercase + remove punctuation for stable scoring."""
-    text = text.lower()
-    return text.translate(str.maketrans("", "", string.punctuation))
-
 
 class COMETMetric(EvaluationMetric):
     """
@@ -178,7 +179,7 @@ class COMETMetric(EvaluationMetric):
 
         try:
             ckpt_dir = os.path.dirname(os.path.dirname(download_model(kin_model_ckpt)))
-            print(ckpt_dir)
+            # print(ckpt_dir)
             os.makedirs(os.path.join(ckpt_dir, "checkpoints"), exist_ok=True)
             shutil.copy(
                 os.path.join(ckpt_dir, "KinyCOMET+Unbabel.ckpt"), 
