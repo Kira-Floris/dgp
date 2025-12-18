@@ -354,7 +354,7 @@ if __name__ == "__main__":
     pipeline = TranslationPipeline(
         provider=VLLMProvider(),
         model_config=ModelConfig(
-            model_name="google/gemma-3-4b-it",
+            model_name="openai/gpt-oss-20b",
             temperature=0.0
         )
     )
@@ -388,7 +388,7 @@ if __name__ == "__main__":
         )
         
         # Save results
-        save_results(results_df, source_col, target_col, output_dir="results/fleurs_mt_benchmark_gemma3_4b_base")
+        save_results(results_df, source_col, target_col, output_dir="results/fleurs_mt_benchmark_gpt_oss_20b")
         
         print("\n" + "="*80 + "\n")
     

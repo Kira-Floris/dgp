@@ -1,11 +1,12 @@
 import os
 from pathlib import Path
-from datasets import Dataset
+from datasets import Dataset, DatasetDict
 from tqdm import tqdm
 
 def upload_txt_dir_to_hf(
     txt_dir: str,
     repo_id: str,
+    split_test_size: float = 0.001,
     private: bool = False,
 ):
     """
@@ -35,9 +36,15 @@ def upload_txt_dir_to_hf(
         "id": file_id
     })
 
-    dataset.push_to_hub(
+    splits = dataset.train_test_split(test_size=split_test_size, seed=42)
+
+    dataset_dict = DatasetDict({
+        "train": splits["train"],
+        "dev": splits["test"]
+    })
+
+    dataset_dict.push_to_hub(
         repo_id,
-        split="train",
         private=private
     )
 
@@ -48,5 +55,6 @@ if __name__ == "__main__":
     upload_txt_dir_to_hf(
         txt_dir="./data/mbazanlp--kinyarwanda_monolingual_v01.1/pretraining",
         repo_id="Kira-Floris/kinyarwanda_monolingual_v01.1",
+        split_test_size=0.001,
         private=True
     )
