@@ -343,6 +343,10 @@ def save_results(results_df, source_lang, target_lang, output_dir="results/fleur
 
 
 if __name__ == "__main__":
+
+    model_name = "Kira-Floris/Qwen3-4B"
+    output_dir = "results/fleurs_mt_benchmark_kira_floris_qwen3_4b_stage2"
+
     # Load dataset
     print("Loading FLEURS MT Benchmark dataset...")
     dataset = load_dataset("Kira-Floris/Fleurs-MT-Benchmark")
@@ -354,7 +358,7 @@ if __name__ == "__main__":
     pipeline = TranslationPipeline(
         provider=VLLMProvider(),
         model_config=ModelConfig(
-            model_name="openai/gpt-oss-20b",
+            model_name=model_name,
             temperature=0.0
         )
     )
@@ -388,7 +392,7 @@ if __name__ == "__main__":
         )
         
         # Save results
-        save_results(results_df, source_col, target_col, output_dir="results/fleurs_mt_benchmark_gpt_oss_20b")
+        save_results(results_df, source_col, target_col, output_dir=output_dir)
         
         print("\n" + "="*80 + "\n")
     
