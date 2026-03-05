@@ -51,7 +51,7 @@ class OpenAIProvider:
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
-            raise RuntimeError(f"OpenAI translation error: {e}")
+            raise RuntimeError(f"OpenAI error: {e}")
     
     def get_provider_name(self) -> str:
         return "OpenAI"
@@ -89,7 +89,7 @@ class GroqProvider:
             return response.choices[0].message.content.strip()
 
         except Exception as e:
-            raise RuntimeError(f"Groq translation error: {e}")
+            raise RuntimeError(f"Groq error: {e}")
 
     def get_provider_name(self) -> str:
         return "Groq"
@@ -108,7 +108,8 @@ class VLLMProvider:
         # Create OpenAI client pointing to vLLM server
         self.client = openai.OpenAI(
             base_url=self.base_url,
-            api_key=self.api_key
+            api_key=self.api_key,
+            max_retries=3
         )
     
     def invoke(
@@ -129,7 +130,7 @@ class VLLMProvider:
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
-            raise RuntimeError(f"vLLM translation error: {e}")
+            raise RuntimeError(f"vLLM error: {e}")
     
     def get_provider_name(self) -> str:
         return "vLLM"

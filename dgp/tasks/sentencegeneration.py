@@ -489,20 +489,24 @@ if __name__ == "__main__":
     from dgp.providers import GroqProvider
     from dgp.tasks.translation import TranslationPipeline
 
-    provider = GroqProvider()
+    # provider = GroqProvider()
+    from dgp.providers import VLLMProvider
+    provider = VLLMProvider(
+        base_url="http://localhost:10000/v1"
+    )
 
     translation_pipeline = TranslationPipeline(
         provider=provider,
-        model_config=ModelConfig(model_name="openai/gpt-oss-20b", temperature=0.0)
+        model_config=ModelConfig(model_name="openai/gpt-oss-120b", temperature=0.0)
     )
 
     pipeline = SentenceGenerationPipeline(
         provider=provider,
         translation_pipeline=translation_pipeline,
-        model_config=ModelConfig(model_name="openai/gpt-oss-20b", temperature=0.7)
+        model_config=ModelConfig(model_name="openai/gpt-oss-120b", temperature=0.7)
     )
 
-    result = pipeline.run(word="nostalgia")
+    result = pipeline.run(word="florist")
 
     # Example output:
     # {
