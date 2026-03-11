@@ -5,13 +5,14 @@ Summary: Add your description here
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 Requires-Dist: datasets
-Requires-Dist: fasttext
+Requires-Dist: fasttext-wheel
 Requires-Dist: groq>=0.37.0
 Requires-Dist: langgraph
 Requires-Dist: openai
 Requires-Dist: sacrebleu
 Requires-Dist: transformers
 Requires-Dist: unbabel-comet
+Requires-Dist: google-genai
 
 
 ## Setup

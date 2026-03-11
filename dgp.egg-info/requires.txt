@@ -1,8 +1,9 @@
 datasets
-fasttext
+fasttext-wheel
 groq>=0.37.0
 langgraph
 openai
 sacrebleu
 transformers
 unbabel-comet
+google-genai

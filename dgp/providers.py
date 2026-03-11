@@ -3,6 +3,8 @@ import os
 
 import openai
 import groq
+from google import genai
+from transformers import pipeline
 
 from dgp.config import ModelConfig
 
@@ -134,3 +136,95 @@ class VLLMProvider:
     
     def get_provider_name(self) -> str:
         return "vLLM"
+
+class GeminiProvider:
+    """Google Gemini-based translation provider."""
+
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "Gemini API key must be provided or set in GEMINI_API_KEY environment variable"
+            )
+
+        # genai.configure(api_key=self.api_key)
+
+    def invoke(
+        self,
+        text: str,
+        system: str,
+        config: ModelConfig
+    ) -> str:
+        try:
+            # model = genai.Client(config.model_name)
+            client = genai.Client(api_key=self.api_key)
+
+            prompt = f"{system}\n\n{text}"
+
+            response = client.models.generate_content(
+                model=config.model_name,
+                contents=prompt,
+                config=genai.types.GenerateContentConfig(
+                    temperature=config.temperature,
+                    max_output_tokens=config.max_tokens
+                )
+            )
+
+            return response.text.strip()
+
+        except Exception as e:
+            raise RuntimeError(f"Gemini error: {e}")
+
+    def get_provider_name(self) -> str:
+        return "Gemini"
+
+# ###################################################
+# Translation Models
+# ###################################################
+
+class NLLBProvider:
+    """NLLB-based translation provider using HuggingFace pipeline."""
+
+    def __init__(
+        self,
+        model_name: str = "facebook/nllb-200-distilled-600M",
+        src_lang: str = "eng_Latn",
+        tgt_lang: str = "kin_Latn",
+        device: int = -1
+    ):
+        """
+        Args:
+            model_name: HuggingFace model identifier
+            src_lang: source language code
+            tgt_lang: target language code
+            device: -1 for CPU, >=0 for GPU
+        """
+
+        self.translator = pipeline(
+            "translation",
+            model=model_name,
+            src_lang=src_lang,
+            tgt_lang=tgt_lang,
+            device=device
+        )
+
+    def invoke(
+        self,
+        text: str,
+        system: str,
+        config: ModelConfig
+    ) -> str:
+        """
+        Run translation using the NLLB pipeline.
+        """
+
+        try:
+            result = self.translator(
+                text,
+                max_length=config.max_tokens
+            )
+
+            return result[0]["translation_text"].strip()
+
+        except Exception as e:
+            raise RuntimeError(f"NLLB error: {e}")
