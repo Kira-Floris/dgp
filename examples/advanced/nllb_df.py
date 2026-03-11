@@ -6,6 +6,7 @@ from typing import Optional
 import threading
 import logging
 from tqdm import tqdm
+import torch
 
 from dgp.providers import NLLBProvider, ModelConfig
 
@@ -41,12 +42,40 @@ class TranslationResult:
     error: Optional[str] = None
 
 
+def _build_provider(model_name: str, src_lang: str, tgt_lang: str, device: int) -> NLLBProvider:
+    """
+    Load a provider on the main thread and do a warm-up forward pass to
+    confirm the weights are fully materialised before any worker touches it.
+    Raises immediately if the model is on meta device.
+    """
+    provider = NLLBProvider(
+        model_name=model_name,
+        src_lang=src_lang,
+        tgt_lang=tgt_lang,
+        device=device,
+    )
+
+    # Verify weights are real — meta tensors have no storage
+    first_param = next(provider.translator.model.parameters())
+    if first_param.is_meta:
+        raise RuntimeError(
+            f"Model loaded onto meta device (no real weights). "
+            f"Check that '{model_name}' downloaded correctly and that "
+            f"device={device} is valid on this machine."
+        )
+
+    logger.info("Loaded %s → %s (device=%s, dtype=%s)", src_lang, tgt_lang, first_param.device, first_param.dtype)
+    return provider
+
+
 class TranslationPipeline:
     """
-    Uses a thread-local store to give each worker thread its own pair of
-    NLLBProvider instances. This avoids the 'Already borrowed' error that
-    occurs when multiple threads share the same HuggingFace tokenizer,
-    whose underlying Rust implementation is not thread-safe.
+    Providers are built eagerly on the main thread so weight loading and
+    verification happen before any worker thread runs. Workers receive
+    already-loaded providers via a per-direction threading.Lock so that
+    only one thread uses each provider at a time — HuggingFace's Rust
+    tokenizer is not thread-safe (causes 'Already borrowed' / meta-tensor
+    errors when accessed concurrently).
     """
 
     def __init__(
@@ -55,30 +84,20 @@ class TranslationPipeline:
         device: int = -1,
         max_new_tokens: int = 512,
     ):
-        self._model_name = model_name
-        self._device = device
         self._config = make_config(model_name, max_new_tokens)
-        self._local = threading.local()  # each thread gets its own .providers dict
 
-    def _get_providers(self) -> dict:
-        """Return this thread's provider pair, initialising them on first access."""
-        if not hasattr(self._local, "providers"):
-            logger.info("Thread %s: initialising providers…", threading.current_thread().name)
-            self._local.providers = {
-                "english": NLLBProvider(
-                    model_name=self._model_name,
-                    src_lang=NLLB_CODES["english"],
-                    tgt_lang=NLLB_CODES["kinyarwanda"],
-                    device=self._device,
-                ),
-                "kinyarwanda": NLLBProvider(
-                    model_name=self._model_name,
-                    src_lang=NLLB_CODES["kinyarwanda"],
-                    tgt_lang=NLLB_CODES["english"],
-                    device=self._device,
-                ),
-            }
-        return self._local.providers
+        logger.info("Loading EN → RW provider…")
+        en_provider = _build_provider(model_name, NLLB_CODES["english"],     NLLB_CODES["kinyarwanda"], device)
+
+        logger.info("Loading RW → EN provider…")
+        rw_provider = _build_provider(model_name, NLLB_CODES["kinyarwanda"], NLLB_CODES["english"],     device)
+
+        # Pair each provider with a lock so threads queue up instead of colliding
+        self._guarded: dict[str, tuple[NLLBProvider, threading.Lock]] = {
+            "english":     (en_provider, threading.Lock()),
+            "kinyarwanda": (rw_provider, threading.Lock()),
+        }
+        logger.info("Both providers ready.")
 
     def _translate_single(self, index: int, text: str, source_lang: str) -> TranslationResult:
         source_lang = source_lang.strip().lower()
@@ -94,8 +113,9 @@ class TranslationPipeline:
             )
 
         try:
-            provider = self._get_providers()[source_lang]
-            translation = provider.invoke(text, system="", config=self._config)
+            provider, lock = self._guarded[source_lang]
+            with lock:
+                translation = provider.invoke(text, system="", config=self._config)
             return TranslationResult(
                 index=index,
                 source_text=text,
