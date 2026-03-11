@@ -5,6 +5,7 @@ import openai
 import groq
 from google import genai
 from transformers import pipeline
+import torch
 
 from dgp.config import ModelConfig
 
@@ -229,3 +230,75 @@ class NLLBProvider:
 
         except Exception as e:
             raise RuntimeError(f"NLLB error: {e}")
+
+
+
+class TranslateGemmaProvider:
+    """
+    TranslateGemma translation provider using HuggingFace's image-text-to-text pipeline.
+
+    Args:
+        model_name: HuggingFace model identifier.
+        src_lang:   ISO 639-1 source language code (e.g. "en", "rw", "fr").
+        tgt_lang:   ISO 639-1 target language code.
+        device:     "cpu", "cuda", "cuda:0", etc. Defaults to CUDA if available.
+        dtype:      Torch dtype. Defaults to bfloat16 on GPU, float32 on CPU.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "google/translategemma-4b-it",
+        src_lang: str = "en",
+        tgt_lang: str = "rw",
+        device: str | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        self.src_lang = src_lang
+        self.tgt_lang = tgt_lang
+
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        if dtype is None:
+            dtype = torch.bfloat16 if device != "cpu" else torch.float32
+
+        self.translator = pipeline(
+            "image-text-to-text",
+            model=model_name,
+            device=device,
+            torch_dtype=dtype,
+        )
+
+    def _build_messages(self, text: str) -> list:
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "source_lang_code": self.src_lang,
+                        "target_lang_code": self.tgt_lang,
+                        "text": text,
+                    }
+                ],
+            }
+        ]
+
+    def invoke(
+        self,
+        text: str,
+        system: str,
+        config: ModelConfig,
+    ) -> str:
+        try:
+            output = self.translator(
+                text=self._build_messages(text),
+                max_new_tokens=config.max_tokens or 512,
+            )
+            return output[0]["generated_text"][-1]["content"].strip()
+
+        except Exception as e:
+            raise RuntimeError(f"TranslateGemma error: {e}")
+
+    def get_provider_name(self) -> str:
+        return "Google"
