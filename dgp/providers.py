@@ -221,7 +221,8 @@ class NLLBProvider:
         try:
             result = self.translator(
                 text,
-                max_length=config.max_tokens or 512
+                max_length=config.max_tokens or 512,
+                truncation=True,
             )
 
             return result[0]["translation_text"].strip()
