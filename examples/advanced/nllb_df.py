@@ -3,6 +3,7 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Optional
+import threading
 import logging
 from tqdm import tqdm
 
@@ -23,12 +24,6 @@ TRANSLATION_TARGET = {
 
 
 def make_config(model_name: str, max_new_tokens: int) -> ModelConfig:
-    """
-    max_new_tokens controls only the *output* budget.
-    This avoids the HuggingFace warning that fires when input_length > 0.9 * max_length,
-    which happens when max_length (input+output) is set too small for longer source texts.
-    NLLBProvider.invoke must pass this as max_new_tokens, not max_length.
-    """
     return ModelConfig(
         model_name=model_name,
         temperature=0.0,
@@ -48,8 +43,10 @@ class TranslationResult:
 
 class TranslationPipeline:
     """
-    Holds two directional NLLBProvider instances and routes each row
-    to the correct one based on the source language.
+    Uses a thread-local store to give each worker thread its own pair of
+    NLLBProvider instances. This avoids the 'Already borrowed' error that
+    occurs when multiple threads share the same HuggingFace tokenizer,
+    whose underlying Rust implementation is not thread-safe.
     """
 
     def __init__(
@@ -58,23 +55,30 @@ class TranslationPipeline:
         device: int = -1,
         max_new_tokens: int = 512,
     ):
+        self._model_name = model_name
+        self._device = device
         self._config = make_config(model_name, max_new_tokens)
-        logger.info("Loading providers…")
-        self._providers = {
-            "english": NLLBProvider(
-                model_name=model_name,
-                src_lang=NLLB_CODES["english"],
-                tgt_lang=NLLB_CODES["kinyarwanda"],
-                device=device,
-            ),
-            "kinyarwanda": NLLBProvider(
-                model_name=model_name,
-                src_lang=NLLB_CODES["kinyarwanda"],
-                tgt_lang=NLLB_CODES["english"],
-                device=device,
-            ),
-        }
-        logger.info("Both providers ready.")
+        self._local = threading.local()  # each thread gets its own .providers dict
+
+    def _get_providers(self) -> dict:
+        """Return this thread's provider pair, initialising them on first access."""
+        if not hasattr(self._local, "providers"):
+            logger.info("Thread %s: initialising providers…", threading.current_thread().name)
+            self._local.providers = {
+                "english": NLLBProvider(
+                    model_name=self._model_name,
+                    src_lang=NLLB_CODES["english"],
+                    tgt_lang=NLLB_CODES["kinyarwanda"],
+                    device=self._device,
+                ),
+                "kinyarwanda": NLLBProvider(
+                    model_name=self._model_name,
+                    src_lang=NLLB_CODES["kinyarwanda"],
+                    tgt_lang=NLLB_CODES["english"],
+                    device=self._device,
+                ),
+            }
+        return self._local.providers
 
     def _translate_single(self, index: int, text: str, source_lang: str) -> TranslationResult:
         source_lang = source_lang.strip().lower()
@@ -90,7 +94,7 @@ class TranslationPipeline:
             )
 
         try:
-            provider = self._providers[source_lang]
+            provider = self._get_providers()[source_lang]
             translation = provider.invoke(text, system="", config=self._config)
             return TranslationResult(
                 index=index,
@@ -152,12 +156,11 @@ if __name__ == "__main__":
     parser.add_argument("--text-col",       default="text",     help="Column with source text (default: text)")
     parser.add_argument("--lang-col",       default="language", help="Column with source language (default: language)")
     parser.add_argument("--max-workers",    type=int, default=4,   help="Thread pool size (default: 4)")
-    parser.add_argument("--max-new-tokens", type=int, default=512, help="Max tokens to *generate* per row — does not include input length (default: 512)")
+    parser.add_argument("--max-new-tokens", type=int, default=512, help="Max tokens to generate per row (default: 512)")
     parser.add_argument("--device",         type=int, default=-1,  help="-1 for CPU, >=0 for GPU index (default: -1)")
     parser.add_argument("--model",          default="facebook/nllb-200-distilled-600M", help="NLLB model name")
     args = parser.parse_args()
 
-    # Load input
     if args.input.endswith(".parquet"):
         df = pd.read_parquet(args.input)
     else:
