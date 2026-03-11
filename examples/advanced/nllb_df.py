@@ -1,8 +1,10 @@
+import argparse
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Optional
 import logging
+from tqdm import tqdm
 
 from dgp.providers import NLLBProvider, ModelConfig
 
@@ -117,11 +119,12 @@ class TranslationPipeline:
                 for i, row in df.iterrows()
             }
 
-            for completed_count, future in enumerate(as_completed(future_to_idx), 1):
-                result = future.result()
-                results[future_to_idx[future]] = result
-                if completed_count % 10 == 0 or completed_count == len(df):
-                    logger.info("Progress: %d/%d", completed_count, len(df))
+            with tqdm(total=len(df), desc="Translating", unit="row") as pbar:
+                for future in as_completed(future_to_idx):
+                    result = future.result()
+                    results[future_to_idx[future]] = result
+                    pbar.set_postfix(lang=result.source_lang, status="ok" if not result.error else "err")
+                    pbar.update(1)
 
         df = df.copy()
         df["translated_text"]   = [r.translation for r in results]
@@ -134,27 +137,35 @@ class TranslationPipeline:
 
 
 # ---------------------------------------------------------------------------
-# Example usage
+# CLI entrypoint
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    sample = pd.DataFrame({
-        "text": [
-            "How are you doing?",
-            "The weather is nice today.",
-            "Muraho, amakuru yawe?",
-            "Ndashimye kubonana nawe.",
-            "Machine learning is fascinating.",
-        ],
-        "language": [
-            "english",
-            "english",
-            "kinyarwanda",
-            "kinyarwanda",
-            "english",
-        ],
-    })
+    parser = argparse.ArgumentParser(description="Translate a CSV/Parquet using NLLB.")
+    parser.add_argument("input", help="Path to input file (.csv or .parquet)")
+    parser.add_argument("output", help="Path to write translated file (.csv or .parquet)")
+    parser.add_argument("--text-col", default="text", help="Column containing source text (default: text)")
+    parser.add_argument("--lang-col", default="language", help="Column containing source language (default: language)")
+    parser.add_argument("--max-workers", type=int, default=4, help="Thread pool size (default: 4)")
+    parser.add_argument("--device", type=int, default=-1, help="-1 for CPU, >=0 for GPU index (default: -1)")
+    parser.add_argument("--model", default="facebook/nllb-200-distilled-600M", help="NLLB model name")
+    args = parser.parse_args()
 
-    pipeline = TranslationPipeline(device=-1)
-    result_df = pipeline.run(sample, max_workers=4)
+    # Load input
+    if args.input.endswith(".parquet"):
+        df = pd.read_parquet(args.input)
+    else:
+        df = pd.read_csv(args.input)
 
-    print(result_df[["text", "language", "translated_text", "target_language", "translation_error"]].to_string(index=False))
+    logger.info("Loaded %d rows from %s", len(df), args.input)
+
+    # Run pipeline
+    pipeline = TranslationPipeline(model_name=args.model, device=args.device)
+    result_df = pipeline.run(df, max_workers=args.max_workers, text_col=args.text_col, lang_col=args.lang_col)
+
+    # Save output
+    if args.output.endswith(".parquet"):
+        result_df.to_parquet(args.output, index=False)
+    else:
+        result_df.to_csv(args.output, index=False)
+
+    logger.info("Saved to %s", args.output)
