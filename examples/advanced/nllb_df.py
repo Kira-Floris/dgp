@@ -21,11 +21,19 @@ TRANSLATION_TARGET = {
     "kinyarwanda": "english",
 }
 
-MODEL_CONFIG = ModelConfig(
-    model_name="facebook/nllb-200-distilled-600M",
-    temperature=0.0,
-    max_tokens=512,
-)
+
+def make_config(model_name: str, max_new_tokens: int) -> ModelConfig:
+    """
+    max_new_tokens controls only the *output* budget.
+    This avoids the HuggingFace warning that fires when input_length > 0.9 * max_length,
+    which happens when max_length (input+output) is set too small for longer source texts.
+    NLLBProvider.invoke must pass this as max_new_tokens, not max_length.
+    """
+    return ModelConfig(
+        model_name=model_name,
+        temperature=0.0,
+        max_tokens=max_new_tokens,
+    )
 
 
 @dataclass
@@ -44,7 +52,13 @@ class TranslationPipeline:
     to the correct one based on the source language.
     """
 
-    def __init__(self, model_name: str = "facebook/nllb-200-distilled-600M", device: int = -1):
+    def __init__(
+        self,
+        model_name: str = "facebook/nllb-200-distilled-600M",
+        device: int = -1,
+        max_new_tokens: int = 512,
+    ):
+        self._config = make_config(model_name, max_new_tokens)
         logger.info("Loading providers…")
         self._providers = {
             "english": NLLBProvider(
@@ -77,7 +91,7 @@ class TranslationPipeline:
 
         try:
             provider = self._providers[source_lang]
-            translation = provider.invoke(text, system="", config=MODEL_CONFIG)
+            translation = provider.invoke(text, system="", config=self._config)
             return TranslationResult(
                 index=index,
                 source_text=text,
@@ -102,14 +116,6 @@ class TranslationPipeline:
         text_col: str = "text",
         lang_col: str = "language",
     ) -> pd.DataFrame:
-        """
-        Translate every row in `df` concurrently.
-
-        Returns the original DataFrame with three added columns:
-            - translated_text
-            - target_language
-            - translation_error  (None on success)
-        """
         results: list[Optional[TranslationResult]] = [None] * len(df)
         logger.info("Translating %d rows with %d workers…", len(df), max_workers)
 
@@ -141,13 +147,14 @@ class TranslationPipeline:
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Translate a CSV/Parquet using NLLB.")
-    parser.add_argument("input", help="Path to input file (.csv or .parquet)")
+    parser.add_argument("input",  help="Path to input file (.csv or .parquet)")
     parser.add_argument("output", help="Path to write translated file (.csv or .parquet)")
-    parser.add_argument("--text-col", default="text", help="Column containing source text (default: text)")
-    parser.add_argument("--lang-col", default="language", help="Column containing source language (default: language)")
-    parser.add_argument("--max-workers", type=int, default=4, help="Thread pool size (default: 4)")
-    parser.add_argument("--device", type=int, default=-1, help="-1 for CPU, >=0 for GPU index (default: -1)")
-    parser.add_argument("--model", default="facebook/nllb-200-distilled-600M", help="NLLB model name")
+    parser.add_argument("--text-col",       default="text",     help="Column with source text (default: text)")
+    parser.add_argument("--lang-col",       default="language", help="Column with source language (default: language)")
+    parser.add_argument("--max-workers",    type=int, default=4,   help="Thread pool size (default: 4)")
+    parser.add_argument("--max-new-tokens", type=int, default=512, help="Max tokens to *generate* per row — does not include input length (default: 512)")
+    parser.add_argument("--device",         type=int, default=-1,  help="-1 for CPU, >=0 for GPU index (default: -1)")
+    parser.add_argument("--model",          default="facebook/nllb-200-distilled-600M", help="NLLB model name")
     args = parser.parse_args()
 
     # Load input
@@ -158,11 +165,18 @@ if __name__ == "__main__":
 
     logger.info("Loaded %d rows from %s", len(df), args.input)
 
-    # Run pipeline
-    pipeline = TranslationPipeline(model_name=args.model, device=args.device)
-    result_df = pipeline.run(df, max_workers=args.max_workers, text_col=args.text_col, lang_col=args.lang_col)
+    pipeline = TranslationPipeline(
+        model_name=args.model,
+        device=args.device,
+        max_new_tokens=args.max_new_tokens,
+    )
+    result_df = pipeline.run(
+        df,
+        max_workers=args.max_workers,
+        text_col=args.text_col,
+        lang_col=args.lang_col,
+    )
 
-    # Save output
     if args.output.endswith(".parquet"):
         result_df.to_parquet(args.output, index=False)
     else:
