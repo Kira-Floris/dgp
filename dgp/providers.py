@@ -231,8 +231,9 @@ class NLLBProvider:
 
         except Exception as e:
             raise RuntimeError(f"NLLB error: {e}")
-
-
+        
+    def get_provider_name(self) -> str:
+        return "Facebook"
 
 class TranslateGemmaProvider:
     """
