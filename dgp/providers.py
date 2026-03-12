@@ -206,7 +206,8 @@ class NLLBProvider:
             model=model_name,
             src_lang=src_lang,
             tgt_lang=tgt_lang,
-            device=device
+            # device=device
+            device_map="auto"
         )
 
     def invoke(
@@ -265,7 +266,8 @@ class TranslateGemmaProvider:
         self.translator = pipeline(
             "image-text-to-text",
             model=model_name,
-            device=device,
+            # device=device,
+            device_map="auto",
             torch_dtype=dtype,
         )
 
