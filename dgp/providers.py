@@ -206,8 +206,9 @@ class NLLBProvider:
             model=model_name,
             src_lang=src_lang,
             tgt_lang=tgt_lang,
-            # device=device
-            device_map="auto"
+            device=device,
+            # device_map="auto",
+            dtype=torch.float16
         )
 
     def invoke(
@@ -224,6 +225,7 @@ class NLLBProvider:
             result = self.translator(
                 text,
                 max_length=config.max_tokens or 512,
+                # max_new_tokens=config.max_tokens or 512,
                 truncation=True,
             )
 
