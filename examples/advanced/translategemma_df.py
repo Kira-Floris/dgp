@@ -7,6 +7,7 @@ import threading
 import logging
 from tqdm import tqdm
 import torch
+import os
 
 from dgp.providers import TranslateGemmaProvider, ModelConfig
 from dgp.tasks.translation import TranslationPipeline
@@ -76,6 +77,8 @@ class ConcurrentTranslationPipeline:
         # device_map takes precedence — pass it through to the provider
         effective_device = device if device_map is None else None
 
+        self.model_name = model_name
+
         logger.info("Loading EN → RW pipeline…")
         en_pipeline = _build_pipeline(
             model_name, ISO_CODES["english"], ISO_CODES["kinyarwanda"],
@@ -138,9 +141,13 @@ class ConcurrentTranslationPipeline:
         max_workers: int = 4,
         text_col: str = "text",
         lang_col: str = "language",
+        checkpoint_path: str | None = None,
     ) -> pd.DataFrame:
         results: list[Optional[TranslationResult]] = [None] * len(df)
         logger.info("Translating %d rows with %d workers…", len(df), max_workers)
+
+        # Track whether the checkpoint file header has been written yet
+        checkpoint_header_written = checkpoint_path is not None and os.path.exists(checkpoint_path)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_idx = {
@@ -151,14 +158,34 @@ class ConcurrentTranslationPipeline:
             with tqdm(total=len(df), desc="Translating", unit="row") as pbar:
                 for future in as_completed(future_to_idx):
                     result = future.result()
-                    results[future_to_idx[future]] = result
+                    idx = future_to_idx[future]
+                    results[idx] = result
                     pbar.set_postfix(lang=result.source_lang, status="ok" if not result.error else "err")
                     pbar.update(1)
 
+                    # Append this single row to the checkpoint CSV immediately
+                    if checkpoint_path is not None:
+                        row_df = pd.DataFrame([{
+                            text_col:            result.source_text,
+                            lang_col:            result.source_lang,
+                            "translated_text":   result.translation,
+                            "target_language":   result.target_lang,
+                            "translation_error": result.error,
+                            "model_name":        self.model_name,
+                        }])
+                        row_df.to_csv(
+                            checkpoint_path,
+                            mode="a",
+                            header=not checkpoint_header_written,
+                            index=False,
+                        )
+                        checkpoint_header_written = True
+
         df = df.copy()
-        df["translated_text"]   = [r.translation for r in results]
-        df["target_language"]   = [r.target_lang  for r in results]
-        df["translation_error"] = [r.error        for r in results]
+        df["translated_text"]    = [r.translation for r in results]
+        df["target_language"]    = [r.target_lang  for r in results]
+        df["translation_error"]  = [r.error        for r in results]
+        df["model_name"]         = self.model_name
 
         success = df["translation_error"].isna().sum()
         logger.info("Done — %d/%d succeeded.", success, len(df))
