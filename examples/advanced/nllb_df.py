@@ -988,7 +988,11 @@ def save_dataset(df: pd.DataFrame, path: str, fmt: str) -> None:
 
 def load_model(model_name: str, device: torch.device):
     print(f"\nLoading model {model_name!r} on {device} …")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+    except TypeError as err:
+        print("Error:", err)
+        tokenizer = AutoTokenizer.from_pretrained("facebook/nllb-200-1.3B")
     model = AutoModelForSeq2SeqLM.from_pretrained(
         model_name,
         torch_dtype=torch.float16 if device.type == "cuda" else torch.float32,
