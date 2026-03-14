@@ -5,5 +5,7 @@ langgraph
 openai
 sacrebleu
 transformers
+accelerate
 unbabel-comet
 google-genai
+pillow

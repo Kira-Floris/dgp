@@ -11,8 +11,10 @@ Requires-Dist: langgraph
 Requires-Dist: openai
 Requires-Dist: sacrebleu
 Requires-Dist: transformers
+Requires-Dist: accelerate
 Requires-Dist: unbabel-comet
 Requires-Dist: google-genai
+Requires-Dist: pillow
 
 
 ## Setup
