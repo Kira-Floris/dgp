@@ -555,8 +555,9 @@ def main():
         type=str,
         # default="Kira-Floris/TranslateGemma-4B",
         # default="google/translategemma-4b-it",
-        default="google/translategemma-27b-it",
+        # default="google/translategemma-27b-it",
         # default="Kira-Floris/TranslateGemma-4B-RW2EN",
+        default="DigitalUmuganda/translategemma-4b-it-Kinyarwanda",
         help="Translation model name"
     )
     parser.add_argument(
@@ -569,7 +570,7 @@ def main():
         # default="results/fleurs_mt_benchmark_translategemma_4b_sft_stage1_bi/en-rw.csv",
         # default="results/fleurs_mt_benchmark_translategemma_4b_sft_en-rw-mono_stage1_bi/en-rw.csv",
         # default="results/fleurs_mt_benchmark_translategemma_4b_sft_en-rw-mono_stage2_bi/en-rw.csv",
-        default="results/fleurs_mt_benchmark_translategemma_27b/en-rw.csv",
+        default="results/fleurs_mt_benchmark_digitalumuganda_translategemma-4b-it-kinyarwanda/en-rw.csv",
         help="Output CSV file path"
     )
     parser.add_argument(
@@ -581,7 +582,7 @@ def main():
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=200,
+        default=1024,
         help="Maximum new tokens to generate"
     )
     parser.add_argument(
@@ -602,7 +603,8 @@ def main():
         # default="results/fleurs_mt_benchmark_translategemma_4b_sft_stage1_bi/en-rw.csv",
         # default="results/fleurs_mt_benchmark_translategemma_4b_sft_en-rw-mono_stage1_bi/en-rw.csv",
         # default="results/fleurs_mt_benchmark_translategemma_4b_sft_en-rw-mono_stage2_bi/en-rw.csv",
-        default="results/fleurs_mt_benchmark_translategemma_27b/en-rw.csv",
+        # default="results/fleurs_mt_benchmark_translategemma_27b/en-rw.csv",
+        default="results/fleurs_mt_benchmark_digitalumuganda_translategemma-4b-it-kinyarwanda/en-rw.csv",
         help="Input CSV file for evaluation mode"
     )
     parser.add_argument(
@@ -610,7 +612,7 @@ def main():
         type=str,
         nargs='+',
         choices=['bleu', 'chrf', 'comet'],
-        default='bleu chrf comet',
+        default='bleu chrf',
         help="Metrics to compute (default: all)"
     )
     parser.add_argument(

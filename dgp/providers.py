@@ -74,7 +74,7 @@ class TogetherAIProvider:
             )
 
         # Initialize Together client
-        self.client = Together(api_key=self.api_key)
+        self.client = Together(api_key=self.api_key, timeout=1000)
 
     def invoke(
         self,
