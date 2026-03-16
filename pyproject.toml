@@ -15,5 +15,6 @@ dependencies = [
     "accelerate",
     "unbabel-comet",
     "google-genai",
+    "together",
     "pillow",
 ]
