@@ -13,17 +13,17 @@
 #     --device 0 \
 #     --model google/translategemma-27b-it
 
-# CUDA_VISIBLE_DEVICES=0,1,2,3 OLLAMA_NUM_PARALLEL=256 OLLAMA_MAX_QUEUE=512 OLLAMA_FLASH_ATTENTION=1 nohup ollama serve > ~/ollama.log 2>&1 &
+# CUDA_VISIBLE_DEVICES=0,1,2,3 OLLAMA_NUM_PARALLEL=64 OLLAMA_MAX_QUEUE=128 OLLAMA_FLASH_ATTENTION=1 nohup ollama serve > ~/ollama.log 2>&1 &
 
 # ollama run gpt-oss:120b
 
-# python -m examples.advanced.ollama_df data/split_dataset_100.csv results/openai--gpt_oss_120b.csv \
+python -m examples.advanced.ollama_df data/split_dataset_100.csv results/openai--gpt_oss_120b.csv \
+  --model gpt-oss:120b \
+  --concurrency 4 \
+  --lang-col language \
+  --text-col text
+# python -m examples.advanced.ollama_df data/sample_10.csv results/sample_100.csv \
 #   --model gpt-oss:120b \
 #   --concurrency 256 \
 #   --lang-col language \
 #   --text-col text
-python -m examples.advanced.ollama_df data/sample_10.csv results/sample_100.csv \
-  --model gpt-oss:120b \
-  --concurrency 256 \
-  --lang-col language \
-  --text-col text

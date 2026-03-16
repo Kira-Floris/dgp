@@ -1,6 +1,7 @@
 import argparse
 import csv
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -12,9 +13,11 @@ from tqdm import tqdm
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODEL    = "gpt-oss:120b"           # OpenAI open-weight model via Ollama
-DEFAULT_OLLAMA   = "http://localhost:11434"  # Ollama default base URL
-OLLAMA_TIMEOUT   = 300                       # seconds per request
+DEFAULT_MODEL    = "gpt-oss:120b"
+DEFAULT_OLLAMA   = "http://localhost:11434"
+OLLAMA_TIMEOUT   = 1000        # seconds per request
+MAX_RETRIES      = 3          # retry a failed row up to 3 times
+RETRY_DELAY      = 5          # seconds to wait between retries
 
 LANGUAGE_NAMES = {
     "english":     "English",
@@ -47,17 +50,14 @@ def load_dataset(path: str) -> pd.DataFrame:
 
 
 def load_completed_indices(output_path: str) -> set[int]:
-    """
-    Read already-translated rows from a previous (possibly partial) run.
-    Returns a set of original DataFrame indices that are already done,
-    so we can skip them and resume where we left off.
-    """
     p = Path(output_path)
     if not p.exists():
         return set()
     try:
         done_df = pd.read_csv(p)
         if "_original_index" in done_df.columns:
+            # Only count rows that actually have a translation
+            done_df = done_df[done_df["translation_text"].notna() & (done_df["translation_text"] != "")]
             return set(done_df["_original_index"].tolist())
     except Exception:
         pass
@@ -77,20 +77,13 @@ class IncrementalCSVWriter:
     """
 
     def __init__(self, output_path: str, columns: list[str]) -> None:
-        self.path    = Path(output_path)
-        self.columns = columns
-        self.lock    = threading.Lock()
-        self._initialised = False
-
-        # Create parent directories if needed
+        self.path         = Path(output_path)
+        self.columns      = columns
+        self.lock         = threading.Lock()
+        self._initialised = self.path.exists()
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-        # If the file already exists (resume run), mark as already initialised
-        if self.path.exists():
-            self._initialised = True
-
     def write_row(self, row: dict) -> None:
-        """Append a single row dict to the CSV file (thread-safe)."""
         with self.lock:
             file_exists = self.path.exists() and self._initialised
             with open(self.path, "a", newline="", encoding="utf-8") as f:
@@ -106,7 +99,6 @@ class IncrementalCSVWriter:
 # ---------------------------------------------------------------------------
 
 def check_ollama(base_url: str, model: str) -> None:
-    """Verify Ollama is running and the model is available."""
     try:
         resp = httpx.get(f"{base_url}/api/tags", timeout=10)
         resp.raise_for_status()
@@ -127,13 +119,67 @@ def check_ollama(base_url: str, model: str) -> None:
 
 
 def build_prompt(text: str, src_lang: str, tgt_lang: str) -> str:
+    # Explicit instruction to not think aloud — helps suppress verbose reasoning
     return (
         f"Translate the following text from {src_lang} to {tgt_lang}.\n"
         f"Return ONLY the translated text with no explanation, no preamble, "
-        f"and no quotation marks.\n\n"
+        f"no reasoning, and no quotation marks. Do not include any thinking "
+        f"or notes — output the translation immediately.\n\n"
         f"Text:\n{text}\n\n"
         f"Translation:"
     )
+
+
+def extract_translation(data: dict) -> str:
+    """
+    Extract the final translation from an Ollama response dict.
+
+    Thinking/reasoning models (like gpt-oss:120b) return:
+      - data["thinking"] — the internal chain-of-thought (discard this)
+      - data["response"] — the actual answer (use this)
+
+    Also guards against done_reason="length", which means the model was
+    cut off mid-output by num_predict. We raise so the retry logic can
+    increase the budget and try again.
+    """
+    done_reason = data.get("done_reason", "stop")
+    if done_reason == "length":
+        raise ValueError(
+            "Model hit num_predict limit (done_reason=length). "
+            "Response may be truncated — will retry with higher budget."
+        )
+
+    # Prefer the `response` field (post-thinking answer)
+    result = data.get("response", "").strip()
+
+    # Fallback: if response is empty but thinking is present, the model may
+    # have put the translation inside thinking by mistake — extract last
+    # non-empty paragraph as a last resort
+    if not result and data.get("thinking"):
+        paragraphs = [p.strip() for p in data["thinking"].split("\n\n") if p.strip()]
+        result = paragraphs[-1] if paragraphs else ""
+
+    return result
+
+
+def estimate_num_predict(text: str) -> int:
+    """
+    Estimate a safe num_predict budget based on input text length.
+
+    Token budget breakdown:
+      - Translation output  ≈ 1.5× input tokens  (target language is often wordier)
+      - Thinking overhead   ≈ 2.0× input tokens  (residual even with think=False)
+      - Safety buffer       ×  1.5
+
+    Formula: ceil(word_count × 1.3 × 3.5 × 1.5) rounded up to nearest 512.
+    Minimum of 512, maximum of 16384.
+    """
+    word_count   = len(text.split())
+    input_tokens = word_count * 1.3          # words → tokens
+    raw_budget   = input_tokens * 3.5 * 1.5  # translation + thinking + buffer
+    # Round up to nearest 512 for clean values
+    rounded      = max(512, int((raw_budget + 511) // 512) * 512)
+    return min(rounded, 16384)               # cap at 16k to avoid runaway
 
 
 def translate_one(
@@ -145,24 +191,66 @@ def translate_one(
     base_url: str,
 ) -> tuple[int, str]:
     """
-    Send a single synchronous translation request to Ollama.
-    Returns (original_index, translation) so the caller can restore row order.
-    Each thread gets its own httpx.Client for connection-pool isolation.
+    Translate a single row with automatic retries on failure.
+    num_predict is sized dynamically from the input text length.
+    On done_reason=length, doubles the budget and retries up to MAX_RETRIES.
+    Raises the last exception if all retries are exhausted.
     """
-    prompt  = build_prompt(text, src_lang, tgt_lang)
-    payload = {
-        "model":  model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": 0.0,
-            "num_predict": 1024,
-        },
-    }
-    with httpx.Client(timeout=OLLAMA_TIMEOUT) as client:
-        resp = client.post(f"{base_url}/api/generate", json=payload)
-        resp.raise_for_status()
-        return idx, resp.json()["response"].strip()
+    prompt      = build_prompt(text, src_lang, tgt_lang)
+    base_budget = estimate_num_predict(text)
+
+    # On truncation, double the budget up to 3 times before giving up
+    token_budgets = [base_budget, base_budget * 2, base_budget * 4]
+    token_budgets = [min(b, 16384) for b in token_budgets]  # cap each tier
+
+    last_error = None
+    attempt    = 0
+
+    for budget in token_budgets:
+        for retry in range(1, MAX_RETRIES + 1):
+            attempt += 1
+            payload = {
+                "model":  model,
+                "prompt": prompt,
+                "stream": False,
+                "think":  False,       # top-level: respected by Ollama >= 0.6
+                "options": {
+                    "temperature": 0.0,
+                    "num_predict": budget,
+                    "think": False,    # also inside options for older versions
+                },
+            }
+            try:
+                with httpx.Client(timeout=OLLAMA_TIMEOUT) as client:
+                    resp = client.post(f"{base_url}/api/generate", json=payload)
+                    resp.raise_for_status()
+                    data   = resp.json()
+                    result = extract_translation(data)
+
+                    if not result:
+                        raise ValueError(f"Empty translation returned for idx={idx}")
+
+                    return idx, result
+
+            except ValueError as e:
+                # done_reason=length — break inner retry loop, try bigger budget
+                if "done_reason=length" in str(e) or "num_predict limit" in str(e):
+                    last_error = e
+                    break   # go to next budget tier
+                # empty response — retry with same budget
+                last_error = e
+                if retry < MAX_RETRIES:
+                    time.sleep(RETRY_DELAY * retry)
+
+            except Exception as e:
+                last_error = e
+                if retry < MAX_RETRIES:
+                    time.sleep(RETRY_DELAY * retry)
+
+    raise RuntimeError(
+        f"Row {idx} failed after {attempt} attempts "
+        f"(budgets tried: {token_budgets}). Last error: {last_error}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -222,16 +310,16 @@ def translate_language_df(
         return sub_df
 
     texts        = pending_df[text_col].tolist()
-    orig_indices = pending_df.index.tolist()   # real DataFrame indices
+    orig_indices = pending_df.index.tolist()
     total        = len(texts)
 
     print(f"\n[Ollama] [{src_language} → {tgt_language}]  {total:,} rows to translate  "
           f"|  concurrency {concurrency}  |  model {model!r}")
 
-    results: dict[int, str] = {}   # orig_index → translation
+    results:  dict[int, str] = {}   # orig_index → translation
+    failures: dict[int, str] = {}   # orig_index → error message
 
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        # Map each Future to its original DataFrame index
         future_to_orig_idx = {
             executor.submit(
                 translate_one,
@@ -249,17 +337,34 @@ def translate_language_df(
             colour="green",
         ) as pbar:
             for future in pbar:
-                orig_idx, translation = future.result()
-                results[orig_idx] = translation
+                orig_idx = future_to_orig_idx[future]
+                try:
+                    _, translation = future.result()
+                    results[orig_idx] = translation
 
-                # ── Immediately flush this row to disk ─────────────────────
-                row_data = pending_df.loc[orig_idx].to_dict()
-                row_data["translation_text"]  = translation
-                row_data["model_name"]        = model
-                row_data["_original_index"]   = orig_idx   # used for resume
-                writer.write_row(row_data)
+                    # Immediately flush to disk
+                    row_data = pending_df.loc[orig_idx].to_dict()
+                    row_data["translation_text"] = translation
+                    row_data["model_name"]        = model
+                    row_data["_original_index"]   = orig_idx
+                    writer.write_row(row_data)
 
-    # Fill translated results back into the sub-dataframe
+                except Exception as e:
+                    # Log the failure but keep going — don't let one bad row
+                    # crash the entire job
+                    err_msg = str(e)
+                    failures[orig_idx] = err_msg
+                    pbar.write(f"  [FAIL] row {orig_idx}: {err_msg}")
+
+    # ── Report failures clearly ────────────────────────────────────────────
+    if failures:
+        print(f"\n  ⚠  {len(failures):,} row(s) failed after {MAX_RETRIES} retries:")
+        for orig_idx, err in failures.items():
+            preview = str(pending_df.loc[orig_idx, text_col])[:80]
+            print(f"     row {orig_idx:>6}: {err}  |  text: {preview!r}")
+        print(f"  Re-run the script to retry — failed rows will be picked up automatically.\n")
+
+    # Fill results back into the sub-dataframe
     for orig_idx, translation in results.items():
         sub_df.at[orig_idx, "translation_text"] = translation
 
@@ -287,22 +392,21 @@ def run_pipeline(
     concurrency: int,
     output_path: str,
 ) -> pd.DataFrame:
-    # ── 1. Verify Ollama connection ───────────────────────────────────────
     print(f"Checking Ollama at {base_url} …")
     check_ollama(base_url, model)
     print("Ollama OK.\n")
 
-    # ── 2. Split ──────────────────────────────────────────────────────────
     en_df, kin_df = split_by_language(df, lang_col)
+    if "word_count" in list(en_df.columns):
+        en_df = en_df.sort_values(by="word_count")
+        kin_df = kin_df.sort_values(by="word_count")
 
-    # ── 3. Set up incremental writer + detect already-done rows ───────────
-    output_columns = list(df.columns) + ["translation_text", "model_name", "_original_index"]
-    writer             = IncrementalCSVWriter(output_path, output_columns)
-    completed_indices  = load_completed_indices(output_path)
+    output_columns    = list(df.columns) + ["translation_text", "model_name", "_original_index"]
+    writer            = IncrementalCSVWriter(output_path, output_columns)
+    completed_indices = load_completed_indices(output_path)
     if completed_indices:
         print(f"Found {len(completed_indices):,} already-translated rows in {output_path} — will resume.\n")
 
-    # ── 4. Translate each sub-dataframe, writing each row as it completes ─
     translated_en  = translate_language_df(
         en_df,  "english",     text_col, model, base_url,
         concurrency, writer, completed_indices,
@@ -312,7 +416,6 @@ def run_pipeline(
         concurrency, writer, completed_indices,
     )
 
-    # ── 5. Recombine for the return value (output file is already written) ─
     result = recombine(translated_en, translated_kin)
     print(f"Recombined → {len(result):,} rows total")
     return result
@@ -335,7 +438,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ollama-url",  default=DEFAULT_OLLAMA,help="Ollama base URL")
     parser.add_argument("--concurrency", type=int, default=4,   help="Max parallel Ollama requests")
     parser.add_argument("--format",      default="csv",
-                        choices=["parquet", "csv", "json"],     help="Output format (incremental saving is CSV only)")
+                        choices=["parquet", "csv", "json"],     help="Output format")
     return parser.parse_args()
 
 

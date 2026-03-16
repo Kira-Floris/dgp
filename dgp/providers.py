@@ -3,6 +3,7 @@ import os
 
 import openai
 import groq
+from together import Together
 from google import genai
 from transformers import pipeline
 import torch
@@ -42,11 +43,13 @@ class OpenAIProvider:
         system: str,
         config: ModelConfig
     ) -> str:
+        if "-5" in config.model_name:
+            config.temperature = 1.0
         try:
             response = self.client.chat.completions.create(
                 model=config.model_name,
                 temperature=config.temperature,
-                max_tokens=config.max_tokens,
+                max_completion_tokens=config.max_tokens,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": text}
@@ -58,6 +61,45 @@ class OpenAIProvider:
     
     def get_provider_name(self) -> str:
         return "OpenAI"
+
+class TogetherAIProvider:
+    """TogetherAI-based translation provider."""
+
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
+
+        if not self.api_key:
+            raise ValueError(
+                "Together API key must be provided or set in TOGETHER_API_KEY environment variable"
+            )
+
+        # Initialize Together client
+        self.client = Together(api_key=self.api_key)
+
+    def invoke(
+        self,
+        text: str,
+        system: str,
+        config: ModelConfig
+    ) -> str:
+        try:
+            response = self.client.chat.completions.create(
+                model=config.model_name,
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": text}
+                ]
+            )
+
+            return response.choices[0].message.content.strip()
+
+        except Exception as e:
+            raise RuntimeError(f"TogetherAI error: {e}")
+
+    def get_provider_name(self) -> str:
+        return "TogetherAI"
 
 class GroqProvider:
     """Groq-based translation provider."""

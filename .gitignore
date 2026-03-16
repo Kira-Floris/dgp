@@ -10,3 +10,4 @@ build/
 
 *.env
 *.log
+runner_gemini.sh
