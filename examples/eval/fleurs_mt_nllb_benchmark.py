@@ -47,21 +47,41 @@ class TranslationGenerator:
         "rw": "kin_Latn",
     }
 
-    def __init__(self, model_name: str = "facebook/nllb-200-distilled-600M", device: str = "cuda"):  # CHANGED: default model
+    def __init__(
+        self,
+        model_name: str = "facebook/nllb-200-distilled-600M",
+        device: str = "cuda",
+        tokenizer_name: Optional[str] = None  # CHANGED: new param — lets you load the tokenizer from a different repo than the model
+    ):
         """
         Initialize the NLLB model and tokenizer
 
         Args:
             model_name: HuggingFace model identifier (any NLLB-200 checkpoint)
             device: Device to run model on ('cuda' or 'cpu')
+            tokenizer_name: Optional separate repo to load the tokenizer from.
+                Useful when a fine-tuned checkpoint ships a broken/incomplete
+                tokenizer — point this at the base NLLB model instead
+                (e.g. "facebook/nllb-200-3.3B").
         """
         self.model_name = model_name
         self.device = device if torch.cuda.is_available() else "cpu"
 
+        # CHANGED: fall back to model_name if no separate tokenizer repo given
+        tokenizer_source = tokenizer_name or model_name
+
         logger.info(f"Loading model: {model_name} on {self.device}")
+        logger.info(f"Loading tokenizer from: {tokenizer_source}")
 
         # CHANGED: load tokenizer + seq2seq model directly instead of a chat pipeline
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # CHANGED: use_fast=True — fast tokenizer reads tokenizer.json directly and
+        # avoids the legacy vocab_file lookup that breaks on some fine-tuned repos
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, use_fast=True)
+        except Exception as e:
+            logger.warning(f"Fast tokenizer load failed ({e}); retrying with use_fast=False")
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, use_fast=False)
+
         self.model = AutoModelForSeq2SeqLM.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16 if self.device == "cuda" else torch.float32
@@ -621,6 +641,14 @@ def main():
         default="facebook/nllb-200-distilled-600M",    # CHANGED: any NLLB checkpoint, e.g. nllb-200-1.3B, nllb-200-3.3B
         help="Translation model name (NLLB-200 checkpoint)"
     )
+    # CHANGED: new arg — lets you load the tokenizer from a different (working) repo
+    parser.add_argument(
+        "--tokenizer",
+        type=str,
+        default=None,
+        help="Optional separate repo to load tokenizer from, if the model repo's "
+             "tokenizer is broken/incomplete (e.g. --tokenizer facebook/nllb-200-3.3B)"
+    )
     parser.add_argument(
         "--output",
         type=str,
@@ -695,7 +723,7 @@ def main():
     elif args.mode == 'translate':
         # Generate translations only
         dataset = load_fleurs_dataset(args.dataset, args.split)
-        translator = TranslationGenerator(model_name=args.model, device=args.device)
+        translator = TranslationGenerator(model_name=args.model, device=args.device, tokenizer_name=args.tokenizer)
         generate_translations(
             dataset=dataset,
             translator=translator,
@@ -711,7 +739,7 @@ def main():
     else:  # both
         # Generate translations and evaluate
         dataset = load_fleurs_dataset(args.dataset, args.split)
-        translator = TranslationGenerator(model_name=args.model, device=args.device)
+        translator = TranslationGenerator(model_name=args.model, device=args.device, tokenizer_name=args.tokenizer)
         generate_translations(
             dataset=dataset,
             translator=translator,
