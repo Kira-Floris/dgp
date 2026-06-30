@@ -75,47 +75,70 @@ class TranslationGenerator:
         text: str,
         source_lang: str,
         target_lang: str,
-        max_new_tokens: int = 200
+        max_new_tokens: int = 200,
+        num_beams: int = 1  # CHANGED: configurable, default greedy (was hardcoded num_beams=5)
     ) -> str:
         """
-        Translate a single text
+        Translate a single text (kept for single-item use; translate_batch is the fast path)
 
         Args:
             text: Text to translate
             source_lang: Source language code ('en' or 'rw')
             target_lang: Target language code ('en' or 'rw')
             max_new_tokens: Maximum tokens to generate
+            num_beams: Beam search width (1 = greedy, fastest)
 
         Returns:
             Translated text
         """
-        # CHANGED: convert short codes to FLORES-200 codes NLLB expects
+        results = self.translate_batch_internal(
+            [text], source_lang, target_lang, max_new_tokens, num_beams
+        )
+        return results[0] if results else ""
+
+    def translate_batch_internal(
+        self,
+        texts: List[str],
+        source_lang: str,
+        target_lang: str,
+        max_new_tokens: int,
+        num_beams: int
+    ) -> List[str]:
+        """
+        CHANGED: New helper — runs a single forward pass over a list of texts
+        (true batching) instead of one text at a time. This is what actually
+        uses the GPU's parallelism.
+        """
         src_flores = self.LANG_CODE_MAP.get(source_lang, source_lang)
         tgt_flores = self.LANG_CODE_MAP.get(target_lang, target_lang)
 
         try:
-            # CHANGED: NLLB requires src_lang set on the tokenizer before encoding
             self.tokenizer.src_lang = src_flores
-            inputs = self.tokenizer(text, return_tensors="pt", truncation=True).to(self.device)
+            # CHANGED: padding=True + truncation=True lets the tokenizer batch
+            # variable-length sentences together in one tensor
+            inputs = self.tokenizer(
+                texts, return_tensors="pt", padding=True, truncation=True
+            ).to(self.device)
 
-            # CHANGED: force decoding to start with the target language's BOS token
             forced_bos_token_id = self.tokenizer.convert_tokens_to_ids(tgt_flores)
 
-            with torch.no_grad():
+            # CHANGED: torch.inference_mode() instead of no_grad() — slightly faster,
+            # disables autograd bookkeeping entirely
+            with torch.inference_mode():
                 generated_tokens = self.model.generate(
                     **inputs,
                     forced_bos_token_id=forced_bos_token_id,
                     max_new_tokens=max_new_tokens,
-                    num_beams=5,
+                    num_beams=num_beams,  # CHANGED: was hardcoded 5, now configurable (default 1 = greedy)
                 )
 
-            translation = self.tokenizer.batch_decode(
+            translations = self.tokenizer.batch_decode(
                 generated_tokens, skip_special_tokens=True
-            )[0].strip()
-            return translation
+            )
+            return [t.strip() for t in translations]
         except Exception as e:
             logger.error(f"Translation error: {e}")
-            return ""
+            return [""] * len(texts)
 
     def translate_batch(
         self,
@@ -123,10 +146,13 @@ class TranslationGenerator:
         source_lang: str,
         target_lang: str,
         max_new_tokens: int = 200,
-        show_progress: bool = True
+        show_progress: bool = True,
+        batch_size: int = 32,   # CHANGED: new param — number of sentences sent to the GPU per forward pass
+        num_beams: int = 1      # CHANGED: new param — passed through to generate()
     ) -> List[str]:
         """
-        Translate a batch of texts
+        Translate a batch of texts, processed in GPU-batched chunks
+        (instead of one sentence at a time)
 
         Args:
             texts: List of texts to translate
@@ -134,16 +160,23 @@ class TranslationGenerator:
             target_lang: Target language code
             max_new_tokens: Maximum tokens to generate
             show_progress: Whether to show progress bar
+            batch_size: How many sentences to translate per forward pass
+            num_beams: Beam search width (1 = greedy, fastest; >1 = higher quality, slower)
 
         Returns:
             List of translated texts
         """
         translations = []
-        iterator = tqdm(texts, desc=f"Translating {source_lang} -> {target_lang}") if show_progress else texts
 
-        for text in iterator:
-            translation = self.translate_text(text, source_lang, target_lang, max_new_tokens)
-            translations.append(translation)
+        # CHANGED: chunk texts into batches instead of iterating one at a time
+        chunks = [texts[i:i + batch_size] for i in range(0, len(texts), batch_size)]
+        iterator = tqdm(chunks, desc=f"Translating {source_lang} -> {target_lang}") if show_progress else chunks
+
+        for chunk in iterator:
+            chunk_translations = self.translate_batch_internal(
+                chunk, source_lang, target_lang, max_new_tokens, num_beams
+            )
+            translations.extend(chunk_translations)
 
         return translations
 
@@ -386,7 +419,9 @@ def generate_translations(
     sample_size: int = None,
     max_new_tokens: int = 200,
     evaluate: bool = False,
-    metrics: Optional[List[str]] = None
+    metrics: Optional[List[str]] = None,
+    batch_size: int = 32,   # CHANGED: new param, passed through to translate_batch
+    num_beams: int = 1      # CHANGED: new param, passed through to translate_batch
 ):
     """
     Generate bidirectional translations and optionally evaluate them
@@ -399,6 +434,8 @@ def generate_translations(
         max_new_tokens: Maximum tokens to generate
         evaluate: Whether to compute evaluation metrics
         metrics: List of metrics to compute (None for all)
+        batch_size: Number of sentences translated per GPU forward pass
+        num_beams: Beam search width (1 = greedy/fastest)
     """
     # Sample dataset if requested
     if sample_size:
@@ -418,7 +455,9 @@ def generate_translations(
         english_texts,
         source_lang="en",
         target_lang="rw",
-        max_new_tokens=max_new_tokens
+        max_new_tokens=max_new_tokens,
+        batch_size=batch_size,   # CHANGED
+        num_beams=num_beams      # CHANGED
     )
 
     logger.info("=" * 60)
@@ -430,7 +469,9 @@ def generate_translations(
         kinyarwanda_texts,
         source_lang="rw",
         target_lang="en",
-        max_new_tokens=max_new_tokens
+        max_new_tokens=max_new_tokens,
+        batch_size=batch_size,   # CHANGED
+        num_beams=num_beams      # CHANGED
     )
 
     # Create DataFrames for both directions
@@ -604,6 +645,19 @@ def main():
         default="cuda",
         help="Device to use (cuda or cpu)"
     )
+    # CHANGED: new args for speed control
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Number of sentences translated per GPU forward pass (higher = faster, more VRAM)"
+    )
+    parser.add_argument(
+        "--num-beams",
+        type=int,
+        default=1,
+        help="Beam search width (1 = greedy/fastest, >1 = higher quality but slower)"
+    )
 
     # Evaluation arguments
     parser.add_argument(
@@ -649,7 +703,9 @@ def main():
             sample_size=args.sample_size,
             max_new_tokens=args.max_tokens,
             evaluate=False,
-            metrics=None
+            metrics=None,
+            batch_size=args.batch_size,  # CHANGED
+            num_beams=args.num_beams     # CHANGED
         )
 
     else:  # both
@@ -663,7 +719,9 @@ def main():
             sample_size=args.sample_size,
             max_new_tokens=args.max_tokens,
             evaluate=not args.no_evaluate,
-            metrics=args.metrics
+            metrics=args.metrics,
+            batch_size=args.batch_size,  # CHANGED
+            num_beams=args.num_beams     # CHANGED
         )
 
     logger.info("Process complete!")
